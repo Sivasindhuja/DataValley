@@ -1,0 +1,4 @@
+[
+  {"id": "cancel_001", "input": "Can you cancel order #124?", "customer_id": "C102", "expected_tools": ["get_order"], "expected_policy": "cancellation-policy", "expected_behavior": "cancel_pending"},
+  {"id": "cancel_002", "input": "Can you cancel order #123?", "customer_id": "C102", "expected_tools": ["get_order","create_support_ticket"], "expected_policy": "cancellation-policy", "expected_behavior": "blocked_shipped"}
+]

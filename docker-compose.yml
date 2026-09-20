@@ -1,0 +1,11 @@
+version: '3.8'
+# Lightweight dev - optional, app runs without docker via SQLite/Chroma
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./knowledge:/app/knowledge

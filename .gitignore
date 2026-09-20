@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+
+# Pytest / caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data / DB - local only
+data/app.db
+data/chroma/
+*.db
+*.sqlite
+
+# Env
+.env
+
+# Node
+client/node_modules/
+client/dist/
+client/build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Chroma / embeddings cache
+chroma.sqlite3
