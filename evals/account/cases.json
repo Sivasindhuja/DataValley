@@ -1,0 +1,7 @@
+[
+  {"id":"account_001","input":"What is my account status?","customer_id":"C102","expected_tools":["get_account"],"expected_policy":"account-policy"},
+  {"id":"account_002","input":"Update my email to new@example.com","customer_id":"C102","expected_tools":[],"expected_policy":"account-policy"},
+  {"id":"account_003","input":"Verify my account","customer_id":"C102","expected_tools":["get_account"],"expected_policy":"account-policy"},
+  {"id":"account_004","input":"My login is not working","customer_id":"C102","expected_tools":[],"expected_policy":"account-policy"},
+  {"id":"account_005","input":"Account status for C104","customer_id":"C104","expected_tools":["get_account"],"expected_policy":"account-policy"}
+]

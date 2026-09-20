@@ -1,0 +1,5 @@
+[
+  {"id":"tf_001","input":"Check order #999","customer_id":"C102","expected_tools":["get_order","create_support_ticket"]},
+  {"id":"tf_002","input":"Get refund R999","customer_id":"C102","expected_tools":["get_refund_status"]},
+  {"id":"tf_003","input":"Track order #123 with API timeout","customer_id":"C102","expected_tools":["get_order_status"]}
+]

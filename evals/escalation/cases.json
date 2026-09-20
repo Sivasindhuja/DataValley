@@ -1,0 +1,6 @@
+[
+  {"id":"esc_001","input":"I want to speak to a human","customer_id":"C102","expected_tools":["escalate_to_human"]},
+  {"id":"esc_002","input":"Escalate ticket T42","customer_id":"C102","expected_tools":["escalate_to_human"]},
+  {"id":"esc_003","input":"This is fraud on order 123","customer_id":"C102","expected_tools":["escalate_to_human"]},
+  {"id":"esc_004","input":"I dispute this charge for order 125","customer_id":"C103","expected_tools":["escalate_to_human"]}
+]

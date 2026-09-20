@@ -1,12 +1,9 @@
-"""Customer MCP server - exposes customer tools via MCP protocol (stub for LangGraph integration)"""
+from mcp.server.fastmcp import FastMCP
 from app.tools.customer import get_customer, get_customer_orders, get_customer_tickets, verify_customer
-TOOLS = {
-    "get_customer": get_customer,
-    "get_customer_orders": get_customer_orders,
-    "get_customer_tickets": get_customer_tickets,
-    "verify_customer": verify_customer,
-}
-def handle(tool: str, args: dict):
-    fn = TOOLS.get(tool)
-    if not fn: return {"error": f"Unknown tool {tool}"}
-    return fn(**args)
+mcp = FastMCP("customer-mcp")
+mcp.tool()(get_customer)
+mcp.tool()(get_customer_orders)
+mcp.tool()(get_customer_tickets)
+mcp.tool()(verify_customer)
+if __name__ == "__main__":
+    mcp.run()

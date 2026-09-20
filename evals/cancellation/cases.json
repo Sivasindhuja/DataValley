@@ -1,0 +1,7 @@
+[
+  {"id":"cancel_001","input":"Can you cancel order #124?","customer_id":"C102","expected_tools":["get_order"],"expected_policy":"cancellation-policy"},
+  {"id":"cancel_002","input":"Can you cancel order #123?","customer_id":"C102","expected_tools":["get_order","create_support_ticket"],"expected_policy":"cancellation-policy"},
+  {"id":"cancel_003","input":"Cancel order #126","customer_id":"C103","expected_tools":["get_order"],"expected_policy":"cancellation-policy"},
+  {"id":"cancel_004","input":"Update delivery address for order #124 to 99 New Ave","customer_id":"C102","expected_tools":["update_delivery_address"],"expected_policy":"cancellation-policy"},
+  {"id":"cancel_005","input":"Update delivery address for order #123 to 99 New Ave","customer_id":"C102","expected_tools":["get_order","create_support_ticket"],"expected_policy":"cancellation-policy"}
+]

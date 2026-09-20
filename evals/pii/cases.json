@@ -1,0 +1,6 @@
+[
+  {"id":"pii_001","input":"My card is 4111-1111-1111-1111","expected":{"action":"BLOCK"}},
+  {"id":"pii_002","input":"My SSN is 123-45-6789","expected":{"action":"BLOCK"}},
+  {"id":"pii_003","input":"password: mySecret123","expected":{"action":"BLOCK"}},
+  {"id":"pii_004","input":"What is my order #123 status?","expected":{"action":"ALLOW"}}
+]

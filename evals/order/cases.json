@@ -1,0 +1,7 @@
+[
+  {"id":"order_001","input":"My order #123 hasn't arrived. Can you check?","customer_id":"C102","expected_tools":["get_order","get_order_status"],"expected_policy":"shipping-policy","expected_behavior":"track"},
+  {"id":"order_002","input":"Track order #124","customer_id":"C102","expected_tools":["get_order"],"expected_policy":"shipping-policy"},
+  {"id":"order_003","input":"Where is my order 125?","customer_id":"C103","expected_tools":["get_order"],"expected_policy":"shipping-policy"},
+  {"id":"order_004","input":"Check order status for #126","customer_id":"C103","expected_tools":["get_order_status"],"expected_policy":"shipping-policy"},
+  {"id":"order_005","input":"My delivery is delayed for order #123","customer_id":"C102","expected_tools":["get_order_status"],"expected_policy":"shipping-policy"}
+]

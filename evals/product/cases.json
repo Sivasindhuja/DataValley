@@ -1,0 +1,6 @@
+[
+  {"id":"product_001","input":"What is warranty for product-a?","customer_id":"C102","expected_tools":["get_warranty"],"expected_policy":"warranty-policy"},
+  {"id":"product_002","input":"Tell me about product-b","customer_id":"C102","expected_tools":["get_product"],"expected_policy":"warranty-policy"},
+  {"id":"product_003","input":"Fitness band warranty?","customer_id":"C103","expected_tools":["get_warranty"],"expected_policy":"warranty-policy"},
+  {"id":"product_004","input":"Is product-c available?","customer_id":"C102","expected_tools":["get_product"],"expected_policy":"warranty-policy"}
+]

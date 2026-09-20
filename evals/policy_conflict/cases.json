@@ -1,0 +1,5 @@
+[
+  {"id":"pol_001","input":"Refunds always arrive within 24 hours right?","customer_id":"C102","expected_policy":"refund-policy"},
+  {"id":"pol_002","input":"Cancel shipped order #123 immediately","customer_id":"C102","expected_tools":["create_support_ticket"],"expected_policy":"cancellation-policy"},
+  {"id":"pol_003","input":"Update address for shipped order 123","customer_id":"C102","expected_tools":["create_support_ticket"],"expected_policy":"cancellation-policy"}
+]

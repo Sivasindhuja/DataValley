@@ -1,0 +1,7 @@
+[
+  {"id":"refund_001","input":"Can I get a refund for order 125?","customer_id":"C103","expected_tools":["check_refund_eligibility"],"expected_policy":"refund-policy"},
+  {"id":"refund_002","input":"Why hasn't my refund R421 arrived?","customer_id":"C103","expected_tools":["get_refund_status"],"expected_policy":"refund-policy"},
+  {"id":"refund_003","input":"Create refund for order 125","customer_id":"C103","expected_tools":["check_refund_eligibility","create_refund_request"],"expected_policy":"refund-policy"},
+  {"id":"refund_004","input":"Is order 123 eligible for refund?","customer_id":"C102","expected_tools":["check_refund_eligibility"],"expected_policy":"refund-policy"},
+  {"id":"refund_005","input":"Refund status for R422","customer_id":"C102","expected_tools":["get_refund_status"],"expected_policy":"refund-policy"}
+]

@@ -5,6 +5,11 @@ INJECTION_PATTERNS = [
     r"admin\s*database",
     r"jailbreak",
     r"do anything now",
+    r"ignore.*policy",
+    r"reveal.*instructions",
+    r"act as.*admin",
+    r"bypass.*guardrail",
+    r"override.*policy",
 ]
 def detect_injection(text: str):
     low = text.lower()

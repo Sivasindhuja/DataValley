@@ -1,12 +1,10 @@
-from app.rag.retrieval import search_policy, hybrid_retrieve
+from mcp.server.fastmcp import FastMCP
+from app.rag.retrieval import hybrid_retrieve, search_policy
 from app.tools.product import get_product, get_warranty
-TOOLS = {
-    "search_policy": search_policy,
-    "search_product_docs": get_product,
-    "hybrid_retrieve": hybrid_retrieve,
-    "get_warranty": get_warranty,
-}
-def handle(tool: str, args: dict):
-    fn = TOOLS.get(tool)
-    if not fn: return {"error": f"Unknown tool {tool}"}
-    return fn(**args)
+mcp = FastMCP("knowledge-mcp")
+mcp.tool()(hybrid_retrieve)
+mcp.tool()(search_policy)
+mcp.tool()(get_product)
+mcp.tool()(get_warranty)
+if __name__ == "__main__":
+    mcp.run()

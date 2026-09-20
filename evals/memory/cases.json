@@ -1,0 +1,5 @@
+[
+  {"id":"mem_001","input":"My order #123 is delayed","customer_id":"C102","expected_tools":["get_order"]},
+  {"id":"mem_002","input":"What was my previous issue with order 123?","customer_id":"C102","expected_tools":["get_order"]},
+  {"id":"mem_003","input":"Do you remember my open ticket?","customer_id":"C102","expected_tools":[]}
+]
