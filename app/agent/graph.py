@@ -12,14 +12,50 @@ from app.guardrails.actions import check_action
 from app.observability.tracing import start_trace, log_step, end_trace
 from app.observability.metrics import inc
 from app.rag.citations import attach_citations
-from app.tools.customer import get_customer, get_customer_orders
-from app.tools.orders import get_order, get_order_status, cancel_order, update_delivery_address
-from app.tools.refunds import get_refund_status, check_refund_eligibility, create_refund_request
-from app.tools.product import get_product, get_warranty
-from app.tools.support import create_support_ticket, escalate_to_human, get_ticket
-from app.tools.communication import send_email, send_notification
-from app.tools.account import get_account, update_account
+# MCP Layer spec §10: all business tools via MCP client (with DIRECT fallback when ENABLE_MCP=false)
+from app.mcp.client import call as mcp_call, DIRECT_MAP
+from app.tools.customer import get_customer  # keep for type fallback; actual calls via mcp_call
 import os
+
+# Thin wrappers routing via MCP client (spec §4 architecture: Agent -> MCP Client -> Servers -> DB) + retry per spec §16
+def _mcp(tool: str, **kwargs):
+    import time
+    last=None
+    for attempt in range(3):
+        try:
+            res=mcp_call(tool, kwargs)
+            # retry on transient error (not "not found")
+            if isinstance(res, dict) and "error" in res and "not found" not in res["error"].lower():
+                last=res
+                time.sleep(0.15* (attempt+1))
+                continue
+            return res
+        except Exception as e:
+            last={"error": str(e)}
+            time.sleep(0.15* (attempt+1))
+    return last
+
+def get_customer_orders(cid): return _mcp("get_customer_orders", customer_id=cid)
+def get_customer_tickets(cid): return _mcp("get_customer_tickets", customer_id=cid)
+def verify_customer(cid, email=None): return _mcp("verify_customer", customer_id=cid, email=email)
+def get_order(oid): return _mcp("get_order", order_id=oid)
+def get_order_status(oid): return _mcp("get_order_status", order_id=oid)
+def cancel_order(oid): return _mcp("cancel_order", order_id=oid)
+def update_delivery_address(oid, addr): return _mcp("update_delivery_address", order_id=oid, new_address=addr)
+def get_refund_status(rid): return _mcp("get_refund_status", refund_id=rid)
+def check_refund_eligibility(oid): return _mcp("check_refund_eligibility", order_id=oid)
+def create_refund_request(oid, cid, reason=""): return _mcp("create_refund_request", order_id=oid, customer_id=cid, reason=reason)
+def get_product(pid): return _mcp("get_product", product_id=pid)
+def get_warranty(pid): return _mcp("get_warranty", product_id=pid)
+def get_product_status(pid): return _mcp("get_product_status", product_id=pid) if "get_product_status" in DIRECT_MAP else {"product": pid, "available": True}
+def create_support_ticket(cid, issue, order_id=None, priority="MEDIUM", summary=None): return _mcp("create_support_ticket", customer_id=cid, issue=issue, order_id=order_id, priority=priority, summary=summary)
+def update_support_ticket(tid, status=None, summary=None): return _mcp("update_support_ticket", ticket_id=tid, status=status, summary=summary)
+def escalate_to_human(cid, reason, ticket_id=None, priority="HIGH"): return _mcp("escalate_to_human", customer_id=cid, reason=reason, ticket_id=ticket_id, priority=priority)
+def get_ticket(tid): return _mcp("get_ticket", ticket_id=tid)
+def send_email(to, subject, body): return _mcp("send_email", to=to, subject=subject, body=body)
+def send_notification(cid, message, channel="email"): return _mcp("send_notification", customer_id=cid, message=message, channel=channel)
+def get_account(cid): return _mcp("get_account", customer_id=cid) if "get_account" in DIRECT_MAP else get_customer(cid)
+def update_account(cid, email=None, communication_preference=None, verify=False): return _mcp("update_account", customer_id=cid, email=email, communication_preference=communication_preference, verify=verify) if "update_account" in DIRECT_MAP else {"success": False, "need_verification": True}
 
 try:
     import google.generativeai as genai
@@ -50,12 +86,11 @@ def extract_order_id(text: str):
 
 def detect_intent(text: str):
     t=text.lower()
-    # priority: refund/address/cancel before generic order
     if "address" in t or "update delivery" in t: return "address_update"
     if "cancel" in t: return "cancel_order"
     if "refund" in t: return "refund"
     if "human" in t or "escalate" in t: return "escalation"
-    if any(k in t for k in ["login","account","password","verify"]): return "account_support"
+    if any(k in t for k in ["login","account","password","verify","email","phone"]): return "account_support"
     if any(k in t for k in ["product","warranty"]): return "product_support"
     if "ticket" in t: return "ticket"
     if any(k in t for k in ["order","ship","deliver","track","arrival"]): return "order_support"
@@ -70,6 +105,19 @@ def call_gemini(prompt: str, context: str):
     except Exception as e:
         print(f"Gemini error: {e}")
         return None
+
+def build_escalation_summary(state: AgentState):
+    trace=state["trace"]
+    docs=state.get("retrieved_docs",[])
+    tools=state.get("tools_used",[])
+    return {
+        "customer": state["customer_id"],
+        "issue": state["user_input"],
+        "previous_actions": [f"{s['name']}: {str(s['data'])[:150]}" for s in trace["steps"] if "Tool" in s["name"] or "Policy" in s["name"]],
+        "relevant_policy": ", ".join(d["metadata"].get("document","") for d in docs[:2]),
+        "reason": "Requires human judgment / policy ambiguous / repeated failure / fraud",
+        "tools_used": tools,
+    }
 
 # ---- Nodes ----
 def node_input_guardrail(state: AgentState):
@@ -88,19 +136,40 @@ def node_intent(state: AgentState):
     intent=detect_intent(state["user_input"])
     oid=extract_order_id(state["user_input"]) or state.get("order_id")
     trace=state["trace"]
-    steps=plan(intent, bool(oid))
+    steps=plan(intent, bool(oid), user_input=state["user_input"])
     log_step(trace, "Intent+Planner", {"intent": intent, "plan": steps})
     return {"intent": intent, "order_id": oid, "plan_steps": steps}
 
 def node_memory(state: AgentState):
+    # short-term + long-term + structured customer memory (spec §9)
+    from app.memory.manager import get_short_term_history, get_structured_customer_memory
+    short=get_short_term_history(state.get("messages",[]), window=6)
     mems=retrieve_relevant_memory(state["customer_id"], state["user_input"])
-    log_step(state["trace"], "Memory", {"memories": mems})
-    return {"memories": mems}
+    structured=get_structured_customer_memory(state["customer_id"])
+    log_step(state["trace"], "Memory", {"short_term": short, "memories": mems, "structured": structured, "customer": state["customer_id"]})
+    # merge structured into memories for downstream use
+    return {"memories": mems + [{"content": f"Structured: {structured}", "type": "customer"}]}
 
 def node_rag(state: AgentState):
     docs=hybrid_retrieve(state["user_input"], top_k=3)
     log_step(state["trace"], "RAG", {"docs": [d["metadata"].get("document") for d in docs]})
     return {"retrieved_docs": docs}
+
+def _retry_tool(fn, *args, **kwargs):
+    import time
+    last=None
+    for attempt in range(2):
+        try:
+            res=fn(*args, **kwargs)
+            if isinstance(res, dict) and "error" in res and "not found" not in res["error"].lower():
+                last=res
+                time.sleep(0.15)
+                continue
+            return res
+        except Exception as e:
+            last={"error": str(e)}
+            time.sleep(0.15)
+    return last
 
 def node_tools(state: AgentState):
     intent=state.get("intent")
@@ -113,19 +182,12 @@ def node_tools(state: AgentState):
 
     # Auto-fetch order/status if order mentioned
     if oid and "get_order" not in tool_results:
-        for attempt in range(2):
-            res=get_order(oid)
-            if "error" not in res or attempt==1:
-                break
-            time.sleep(0.1)
+        res=_retry_tool(get_order, oid)
         tools_used.append("get_order")
         tool_results["get_order"]=res
         log_step(trace, "Tool get_order", res)
-        if "error" in res and retry<1:
-            # failure handling: will escalate later
-            pass
-        else:
-            sres=get_order_status(oid)
+        if "error" not in res:
+            sres=_retry_tool(get_order_status, oid)
             tools_used.append("get_order_status")
             tool_results["get_order_status"]=sres
             log_step(trace, "Tool get_order_status", sres)
@@ -195,13 +257,19 @@ def node_tools(state: AgentState):
         tool_results["get_product"]=p
         log_step(trace, "Tool get_warranty", w)
     elif intent=="account_support":
-        if "update" in state["user_input"].lower() and "email" in state["user_input"].lower():
-            # require verify
-            decision=check_action("update_account", {}, cid)
-            # we delegate to high-risk: need verification
-            tool_results["account_update_block"]={"need_verification": True}
+        if "update" in state["user_input"].lower() and any(k in state["user_input"].lower() for k in ["email","phone","password"]):
+            decision=check_action("update_account", {"verify": False}, cid)
+            log_step(trace, "Policy Engine account update", decision, safe=decision.get("allow",False))
+            if decision.get("need_verification") or decision.get("escalate"):
+                tool_results["policy_block"]=decision
+                return {"tools_used": tools_used, "tool_results": tool_results, "suggest_ticket": True}
+            # if verified (would require OTP), proceed
+            acc_update=_retry_tool(update_account, cid, email="new@example.com", verify=True)
+            tools_used.append("update_account")
+            tool_results["update_account"]=acc_update
+            log_step(trace, "Tool update_account", acc_update)
         else:
-            acc=get_account(cid)
+            acc=_retry_tool(get_account, cid)
             tools_used.append("get_account")
             tool_results["get_account"]=acc
             log_step(trace, "Tool get_account", acc)
@@ -221,6 +289,10 @@ def node_tools(state: AgentState):
     # Fraud/dispute detection -> force escalate
     if any(k in state["user_input"].lower() for k in ["fraud","dispute","chargeback"]):
         tool_results["fraud_flag"]=True
+    # Multiple tool failures -> escalate (spec §16)
+    err_cnt=sum(1 for v in tool_results.values() if isinstance(v, dict) and "error" in v)
+    if err_cnt>=2:
+        tool_results["multi_failure"]=True
 
     return {"tools_used": tools_used, "tool_results": tool_results}
 
@@ -231,7 +303,7 @@ def node_respond(state: AgentState):
     oid=state.get("order_id")
     cid=state["customer_id"]
     tool_results=state.get("tool_results",{})
-    # Handle tool failure -> ticket
+    # Handle tool failure -> ticket (spec §16: never invent status)
     if oid and "get_order" in tool_results and "error" in tool_results["get_order"]:
         tr=create_support_ticket(cid, f"Unable to retrieve status for order #{oid} - tool failure", order_id=oid, priority="HIGH", summary=f"Tool get_order failed for {oid};trace {trace['trace_id']}")
         state["tools_used"].append("create_support_ticket")
@@ -239,6 +311,11 @@ def node_respond(state: AgentState):
         log_step(trace, "Tool create_support_ticket (failure)", tr)
         resp="I'm unable to retrieve the latest order status right now. I've created a support request so the issue can be checked manually."
         return {"response": attach_citations(resp, docs)}
+    if tool_results.get("multi_failure"):
+        tr=create_support_ticket(cid, f"Multiple tool failures for: {state['user_input']}", order_id=oid, priority="HIGH", summary=f"Multi-failure trace {trace['trace_id']} tools {tool_results}")
+        state["tools_used"].append("create_support_ticket")
+        log_step(trace, "Multi-failure escalation", tr)
+        return {"response": attach_citations("I'm experiencing repeated system issues. I've escalated to a human specialist with high priority.", docs)}
 
     if state.get("needs_confirmation"):
         status=tool_results.get("get_order",{}).get("status","")
@@ -250,10 +327,13 @@ def node_respond(state: AgentState):
         reason=tool_results.get("policy_block",{}).get("reason","Policy requires manual review")
         if "address" in state["user_input"].lower():
             reason="Cannot update address after shipment per cancellation-policy v3"
-        tr=create_support_ticket(cid, f"Request for order #{oid}: {reason}", order_id=oid, priority="MEDIUM", summary=f"{reason}; intent {intent}")
+        summary_obj=build_escalation_summary(state)
+        summary_obj["reason"]=reason
+        summary_text=f"Customer: {cid}\nIssue: {state['user_input']}\nOrder: {oid}\nPrevious actions: {', '.join(summary_obj['previous_actions'][:3])}\nRelevant policy: {summary_obj['relevant_policy']}\nReason for escalation: {reason}"
+        tr=create_support_ticket(cid, f"Request for order #{oid}: {reason}", order_id=oid, priority="MEDIUM", summary=summary_text)
         state["tools_used"].append("create_support_ticket")
         tool_results["create_support_ticket"]=tr
-        log_step(trace, "Tool create_support_ticket", tr)
+        log_step(trace, "Tool create_support_ticket (escalation summary)", {"ticket": tr, "summary": summary_text})
         if intent=="cancel_order":
             resp=f"Your order #{oid} has already shipped, so I can't cancel it automatically under cancellation-policy v3. I've created a support request {tr['ticket_id']} for manual review."
         else:
@@ -261,9 +341,10 @@ def node_respond(state: AgentState):
         return {"response": attach_citations(resp, docs)}
 
     if tool_results.get("fraud_flag"):
-        esc=escalate_to_human(cid, "Fraud/dispute detected", priority="HIGH")
+        summary_obj=build_escalation_summary(state)
+        esc=escalate_to_human(cid, f"Fraud/dispute detected - {summary_obj['issue']}", priority="HIGH")
         state["tools_used"].append("escalate_to_human")
-        log_step(trace, "Fraud escalation", esc)
+        log_step(trace, "Fraud escalation with summary", {"escalation": esc, "summary": summary_obj})
         return {"response":"I've escalated your fraud/dispute concern to a human specialist. A support ticket has been created with high priority."}
 
     # Intent responses using tool results

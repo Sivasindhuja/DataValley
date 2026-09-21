@@ -1,11 +1,53 @@
 version: '3.8'
-# Lightweight dev - optional, app runs without docker via SQLite/Chroma
+# Hybrid prod: app runs without docker (SQLite+BM25), or with Postgres/Qdrant/Redis when toggled via env
 services:
   api:
     build: .
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/support}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CHROMA_PERSIST_DIR=/app/data/chroma
+      - ENABLE_MCP=${ENABLE_MCP:-false}
     volumes:
       - ./data:/app/data
       - ./knowledge:/app/knowledge
+    depends_on:
+      - db
+      - qdrant
+      - redis
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: support
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.4
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  pgdata:
+  qdrant_data:
+  redis_data:

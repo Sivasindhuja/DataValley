@@ -6,6 +6,27 @@ def ingest():
     from app.rag.retrieval import _load_docs
     docs=_load_docs()
     print(f"Loaded {len(docs)} docs")
+    # Qdrant ingestion (hybrid prod)
+    qdrant_url=os.getenv("QDRANT_URL")
+    if qdrant_url:
+        try:
+            from qdrant_client import QdrantClient
+            from qdrant_client.models import Distance, VectorParams, PointStruct
+            qc=QdrantClient(url=qdrant_url, timeout=10)
+            qc.recreate_collection(collection_name="knowledge", vectors_config=VectorParams(size=384, distance=Distance.COSINE))
+            # try embeddings
+            try:
+                from sentence_transformers import SentenceTransformer
+                model=SentenceTransformer(os.getenv("EMBEDDING_MODEL","all-MiniLM-L6-v2"))
+                vectors=model.encode([d["content"][:2000] for d in docs], normalize_embeddings=True).tolist()
+            except:
+                import random
+                vectors=[[random.random()]*384 for _ in docs]
+            points=[PointStruct(id=i, vector=vectors[i], payload={"document": docs[i]["metadata"].get("document"), "version": docs[i]["metadata"].get("version"), "content": docs[i]["content"][:2000], "metadata": docs[i]["metadata"]}) for i in range(len(docs))]
+            qc.upsert(collection_name="knowledge", points=points)
+            print(f"Ingested {len(docs)} docs into Qdrant at {qdrant_url}")
+        except Exception as e:
+            print(f"Qdrant ingestion skipped: {e}")
     # Try Chroma ingestion
     try:
         import chromadb

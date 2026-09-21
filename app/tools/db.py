@@ -4,8 +4,11 @@ from datetime import datetime
 import os
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
-# handle sqlite+aiosqlite
+# handle sqlite+aiosqlite -> sqlite; postgres stays as-is
 sync_url = DATABASE_URL.replace("sqlite+aiosqlite", "sqlite")
+# postgres via psycopg2 needs postgresql://
+if sync_url.startswith("postgres://"):
+    sync_url = sync_url.replace("postgres://", "postgresql://", 1)
 
 Base = declarative_base()
 
@@ -60,8 +63,11 @@ class MemoryStore(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 def get_engine():
-    os.makedirs("data", exist_ok=True)
-    return create_engine(sync_url, echo=False)
+    # only create data dir for sqlite
+    if sync_url.startswith("sqlite"):
+        os.makedirs("data", exist_ok=True)
+        os.makedirs(os.path.dirname(sync_url.replace("sqlite:///","")) or "data", exist_ok=True)
+    return create_engine(sync_url, echo=False, pool_pre_ping=True)
 
 def init_db():
     engine = get_engine()
