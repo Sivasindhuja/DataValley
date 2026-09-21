@@ -1,8 +1,21 @@
 from app.tools.db import init_db, get_session, Customer, Order, Refund, Ticket, MemoryStore
 from datetime import datetime
+from app.auth.service import hash_password
 
 def seed():
     engine = init_db()
+    # handle migration for password_hash column if DB exists without it (sqlite)
+    try:
+        from sqlalchemy import text
+        eng = engine
+        with eng.connect() as conn:
+            cols = conn.execute(text("PRAGMA table_info(customers)")).fetchall()
+            col_names = [c[1] for c in cols]
+            if "password_hash" not in col_names:
+                conn.execute(text("ALTER TABLE customers ADD COLUMN password_hash VARCHAR"))
+                conn.commit()
+    except Exception as e:
+        print(f"migration check: {e}")
     session = get_session()
     # clear
     session.query(Customer).delete()
@@ -12,9 +25,9 @@ def seed():
     session.query(MemoryStore).delete()
 
     customers = [
-        Customer(id="C102", name="Alex Johnson", email="alex@example.com", status="ACTIVE", communication_preference="email"),
-        Customer(id="C103", name="Priya Singh", email="priya@example.com", status="ACTIVE"),
-        Customer(id="C104", name="John Locked", email="john@example.com", status="LOCKED"),
+        Customer(id="C102", name="Alex Johnson", email="alex@example.com", status="ACTIVE", communication_preference="email", password_hash=hash_password("password123")),
+        Customer(id="C103", name="Priya Singh", email="priya@example.com", status="ACTIVE", password_hash=hash_password("password123")),
+        Customer(id="C104", name="John Locked", email="john@example.com", status="LOCKED", password_hash=hash_password("password123")),
     ]
     orders = [
         Order(id="123", customer_id="C102", product="product-a", status="SHIPPED", amount=149, shipping_address="123 Main St, NY", carrier_status="In transit", shipped_date="2026-09-17", created_at="2026-09-10"),

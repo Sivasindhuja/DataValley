@@ -16,9 +16,9 @@ except:
     OTEL_AVAILABLE=False
     tracer=None
 
-def start_trace(customer_id: str, query: str):
+def start_trace(customer_id: str, query: str, auth_context=None):
     trace_id = str(uuid.uuid4())[:8]
-    trace = {"trace_id": trace_id, "customer_id": customer_id, "query": query, "steps": [], "start": time.time(), "timestamp": datetime.utcnow().isoformat(), "tokens_in": len(query.split()), "tokens_out": 0, "otel_span": None}
+    trace = {"trace_id": trace_id, "customer_id": customer_id, "query": query, "steps": [], "start": time.time(), "timestamp": datetime.utcnow().isoformat(), "tokens_in": len(query.split()), "tokens_out": 0, "otel_span": None, "auth": {"customer_id": customer_id, "authenticated": bool(auth_context.is_authenticated()) if auth_context else False, "roles": auth_context.roles if auth_context else []}, "execution_mode": None}
     if OTEL_AVAILABLE:
         span=tracer.start_span(f"agent.run {trace_id}")
         span.set_attribute("customer_id", customer_id)

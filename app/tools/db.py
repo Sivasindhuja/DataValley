@@ -2,13 +2,11 @@ from sqlalchemy import Column, String, Integer, Float, DateTime, Text, create_en
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import os
+from app.config import settings
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
-# handle sqlite+aiosqlite -> sqlite; postgres stays as-is
-sync_url = DATABASE_URL.replace("sqlite+aiosqlite", "sqlite")
-# postgres via psycopg2 needs postgresql://
-if sync_url.startswith("postgres://"):
-    sync_url = sync_url.replace("postgres://", "postgresql://", 1)
+# Centralized config: single source of truth
+DATABASE_URL = settings.database_url
+sync_url = settings.sync_database_url
 
 Base = declarative_base()
 
@@ -19,6 +17,7 @@ class Customer(Base):
     email = Column(String)
     status = Column(String, default="ACTIVE") # ACTIVE, LOCKED
     communication_preference = Column(String, default="email")
+    password_hash = Column(String, nullable=True)  # bcrypt hash
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class Order(Base):

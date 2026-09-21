@@ -21,3 +21,9 @@ class AgentState(TypedDict, total=False):
     suggest_ticket: bool
     escalate: bool
     retry_count: int
+    # Auth - must come from API, LLM cannot populate
+    auth_context: Optional[Dict]
+    policy_decision: Optional[Dict]
+    execution_mode: Optional[str]
+    # Router context for question vs answer
+    awaiting_confirmation: bool
