@@ -3,18 +3,49 @@ from datetime import datetime
 
 _traces = []
 
-# OpenTelemetry optional
+# OpenTelemetry optional - support OTLP when configured, else console
 try:
     from opentelemetry import trace as otel_trace
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
-    otel_trace.set_tracer_provider(TracerProvider())
-    otel_trace.get_tracer_provider().add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+    # If OTEL_EXPORTER_OTLP_ENDPOINT is set, use OTLP exporter
+    _provider = TracerProvider()
+    _otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if _otlp_endpoint:
+        try:
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+            _provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter(endpoint=_otlp_endpoint)))
+        except Exception as e:
+            print(f"OTLP exporter failed, fallback to console: {e}")
+            _provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+    else:
+        _provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+    # Only set if not already set
+    try:
+        otel_trace.set_tracer_provider(_provider)
+    except: pass
     OTEL_AVAILABLE=True
     tracer=otel_trace.get_tracer("support-agent")
 except:
     OTEL_AVAILABLE=False
     tracer=None
+
+def _load_persisted_traces():
+    # Load from file on startup if memory empty
+    if _traces:
+        return
+    try:
+        path = "data/traces.jsonl"
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        # full trace persisted in extended format
+                        t = json.loads(line.strip())
+                        if isinstance(t, dict) and "trace_id" in t:
+                            _traces.append(t)
+                    except: continue
+    except: pass
 
 def start_trace(customer_id: str, query: str, auth_context=None):
     trace_id = str(uuid.uuid4())[:8]
@@ -25,12 +56,6 @@ def start_trace(customer_id: str, query: str, auth_context=None):
         span.set_attribute("query", query[:200])
         trace["otel_span"]=span
     _traces.append(trace)
-    # also persist to file for dashboard
-    try:
-        os.makedirs("data", exist_ok=True)
-        with open("data/traces.jsonl","a", encoding="utf-8") as f:
-            f.write(json.dumps({"trace_id":trace_id,"customer_id":customer_id,"query":query,"timestamp":trace["timestamp"]})+"\n")
-    except: pass
     return trace
 
 def log_step(trace: dict, name: str, data: dict, safe: bool = True):
@@ -48,10 +73,24 @@ def end_trace(trace: dict):
         trace["otel_span"].set_attribute("cost_usd", trace["cost_usd"])
         trace["otel_span"].end()
         trace["otel_span"]=None
+    # persist full trace (without otel_span) to file
+    try:
+        os.makedirs("data", exist_ok=True)
+        persist = {k: v for k, v in trace.items() if k != "otel_span"}
+        # make json serializable: convert start float
+        persist_copy = json.loads(json.dumps(persist, default=str))
+        with open("data/traces.jsonl","a", encoding="utf-8") as f:
+            f.write(json.dumps(persist_copy)+"\n")
+    except: pass
     return trace
 
-def get_traces():
-    return _traces[-50:]
+def get_traces(limit: int = 50):
+    _load_persisted_traces()
+    # sanitize: remove otel_span before returning
+    out=[]
+    for t in _traces[-limit:]:
+        out.append({k: v for k, v in t.items() if k != "otel_span"})
+    return out
 
 def add_tokens_out(trace: dict, text: str):
     trace["tokens_out"] = len(text.split())

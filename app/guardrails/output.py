@@ -8,6 +8,8 @@ HALLUCINATED_CLAIMS = [
     (r"definitely.*tomorrow", "unsupported promise not grounded"),
     (r"always.*refund", "absolute refund claims require policy citation"),
     (r"free.*refund.*instant", "hallucinated instant refund"),
+    (r"guaranteed.*refund", "guaranteed refund not grounded"),
+    (r"refund.*24 hours", "refund-policy v4 expects 5-7 business days"),
 ]
 
 def validate_output(response: str, grounded_docs: list = None):
@@ -16,6 +18,11 @@ def validate_output(response: str, grounded_docs: list = None):
     pii = detect_pii(response)
     if is_blocking_pii(pii):
         return {"safe": False, "reason": f"PII leakage detected: {pii}", "redacted": redact_pii(response)}
+    # also block phone/email leakage in output (spec §6)
+    if any(f in pii for f in ["phone","email"]):
+        # allow email if it's customer's own masked? For now block if full email present and response contains @
+        if "@" in response and re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", response):
+            return {"safe": False, "reason": f"PII leakage detected: {pii}", "redacted": redact_pii(response)}
     low=response.lower()
     # Hallucination / RAG guardrail §8: detect unsupported timelines/promises
     for pat, reason in HALLUCINATED_CLAIMS:
@@ -39,9 +46,20 @@ def validate_output(response: str, grounded_docs: list = None):
     # Structured output: must be string, not JSON leakage unless requested
     if response.strip().startswith("{") and '"error"' in low:
         return {"safe": False, "reason": "Leaked structured error"}
-    # PII redaction handled upstream; ensure no card remains
+    # PII redaction handled upstream; ensure no card/ssn/phone remains
     if re.search(r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b", response):
         return {"safe": False, "reason": "Card number leakage"}
+    if re.search(r"\b\d{3}-\d{2}-\d{4}\b", response):
+        return {"safe": False, "reason": "SSN leakage"}
+    if re.search(r"\+?\d{1,3}[- ]?\(?\d{3}\)?[- ]?\d{3}[- ]?\d{4}", response):
+        # avoid false positive on order ids: require 10+ digits
+        digits = re.sub(r"\D","", response)
+        if len(digits) >= 10:
+            # check if pattern isolated as phone (not date)
+            if re.search(r"\+?\d{1,3}[- ]?\(?\d{3}\)?[- ]?\d{3}[- ]?\d{4}", response):
+                # allow if redacted already
+                if "[REDACTED]" not in response:
+                    return {"safe": False, "reason": "Phone leakage"}
     return {"safe": True}
 
 def grounding_check(response: str, docs: list):

@@ -1,0 +1,32 @@
+Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+Failed to send telemetry event CollectionGetEvent: capture() takes 1 positional argument but 3 were given
+Failed to send telemetry event CollectionDeleteEvent: capture() takes 1 positional argument but 3 were given
+Failed to send telemetry event CollectionAddEvent: capture() takes 1 positional argument but 3 were given
+INFO:     Started server process [9616]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+Seeded DB with 3 customers, 4 orders
+Loaded 13 docs
+Ingested 13 docs into Chroma at ./data/chroma
+ - faq v2
+ - account-policy v3
+ - cancellation-policy v3
+ - refund-policy v4
+ - shipping-policy v4
+ - warranty-policy v2
+ - product-a v1
+ - product-b v1
+ - product-c v1
+ - troubleshooting-delivery v1
+ - troubleshooting-login v1
+ - troubleshooting-payment v1
+ - troubleshooting-product v1
+INFO:     127.0.0.1:60082 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60083 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60087 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49667 - "GET /dashboard HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:61592 - "POST /chat HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:61592 - "GET /traces HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:62028 - "GET /dashboard HTTP/1.1" 401 Unauthorized

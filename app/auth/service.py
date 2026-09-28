@@ -45,18 +45,24 @@ def decode_access_token(token: str) -> AuthContext:
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
 async def get_current_auth(authorization: Optional[str] = Header(default=None)) -> AuthContext:
-    if not authorization or not authorization.startswith("Bearer "):
+    if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-    token = authorization.replace("Bearer ", "", 1).strip()
+    token = authorization[7:].strip()
     if not token:
         raise HTTPException(status_code=401, detail="Missing token")
     return decode_access_token(token)
 
 def get_optional_auth(authorization: Optional[str] = Header(default=None)) -> Optional[AuthContext]:
-    if not authorization or not authorization.startswith("Bearer "):
+    if not authorization or not authorization.lower().startswith("bearer "):
         return None
-    token = authorization.replace("Bearer ", "", 1).strip()
+    token = authorization[7:].strip()
     try:
         return decode_access_token(token)
-    except:
+    except HTTPException:
         return None
+
+def require_role(auth: AuthContext, allowed_roles: list):
+    if not auth or not auth.is_authenticated():
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not any(r in auth.roles for r in allowed_roles):
+        raise HTTPException(status_code=403, detail=f"Requires role {allowed_roles}")

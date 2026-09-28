@@ -19,9 +19,11 @@ class Settings(BaseSettings):
     # Memory cache
     redis_url: Optional[str] = Field(default=None, alias="REDIS_URL")
 
-    # MCP - explicit mode
-    enable_mcp: bool = Field(default=False, alias="ENABLE_MCP")
-    mcp_execution_mode: str = Field(default="direct", alias="MCP_EXECUTION_MODE")  # mcp | direct
+    # Tool execution - canonical single setting (TOOL_EXECUTION_MODE=direct|mcp)
+    tool_execution_mode: str = Field(default="direct", alias="TOOL_EXECUTION_MODE")  # direct | mcp
+
+    # CORS
+    cors_origins: str = Field(default="http://localhost:5173,http://localhost:3000", alias="CORS_ORIGINS")
 
     # Observability
     otel_enabled: bool = Field(default=True, alias="OTEL_ENABLED")
@@ -32,12 +34,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     jwt_expire_minutes: int = Field(default=60*24, alias="JWT_EXPIRE_MINUTES")
 
-    # Compatibility: map legacy LM_MODEL -> LLM_MODEL if present
+    # Compatibility: map legacy LM_MODEL -> LLM_MODEL if present (typo fix)
     def model_post_init(self, __context):
         import os
-        # handle typo LM_MODEL
         if os.getenv("LM_MODEL") and not os.getenv("LLM_MODEL"):
             object.__setattr__(self, "llm_model", os.getenv("LM_MODEL"))
+        # Legacy MCP vars are ignored - use TOOL_EXECUTION_MODE
 
     @property
     def sync_database_url(self) -> str:

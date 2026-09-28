@@ -5,19 +5,17 @@ from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.planner import plan
 from app.agent.router import extract_order_id as router_extract_order_id, extract_refund_id, is_meta_question
 from app.config import settings
-from app.rag.retrieval import chroma_retrieve
+from app.rag.retrieval import retrieve_policy
 from app.memory.service import memory_service
 from app.memory.manager import store_memory
 from app.guardrails.input import validate_input
 from app.guardrails.output import validate_output
-from app.guardrails.actions import check_action
 from app.observability.tracing import start_trace, log_step, end_trace
 from app.observability.metrics import inc
 from app.rag.citations import attach_citations
 from app.mcp.client import call as mcp_call, DIRECT_MAP, get_execution_mode
 from app.auth.models import AuthContext
 from app.policies.engine import evaluate_policy
-from app.tools.customer import get_customer
 
 # Thin wrappers routing via MCP client - explicit mode, no silent fallback
 def _mcp(tool: str, **kwargs):
@@ -71,22 +69,21 @@ def _auth_from_state(state: AgentState):
         return AuthContext(authenticated=ac.get("authenticated", False), user_id=ac.get("user_id"), customer_id=ac.get("customer_id"), roles=ac.get("roles", ["customer"]))
     if isinstance(ac, AuthContext):
         return ac
-    # fallback to customer_id for backward compat (tests without auth)
-    cid = state.get("customer_id")
-    if cid:
-        return AuthContext(authenticated=True, user_id=cid, customer_id=cid, roles=["customer"])
     return AuthContext(authenticated=False)
 
 def detect_intent(text: str):
-    t=text.lower()
+    t=text.lower().strip()
+    # confirmation intent takes precedence when short affirmative
+    if t in ["yes","yes, cancel","confirm","yes please","go ahead","proceed","cancel it"]:
+        return "cancel_order"
     if "address" in t or "update delivery" in t: return "address_update"
     if "cancel" in t: return "cancel_order"
     if "refund" in t: return "refund"
-    if "human" in t or "escalate" in t: return "escalation"
+    if "human" in t or "escalate" in t or "representative" in t or "agent" in t and "human" in t: return "escalation"
     if any(k in t for k in ["login","account","password","verify","email","phone"]): return "account_support"
     if any(k in t for k in ["product","warranty"]): return "product_support"
     if "ticket" in t: return "ticket"
-    if any(k in t for k in ["order","ship","deliver","track","arrival"]): return "order_support"
+    if any(k in t for k in ["order","ship","deliver","track","arrival","where is my"]): return "order_support"
     return "general"
 
 def call_gemini(prompt: str, context: str):
@@ -120,9 +117,13 @@ def node_input_guardrail(state: AgentState):
     if not inp["safe"]:
         return {"blocked": True, "response": "Your request was blocked by safety policy: "+inp.get("reason",""), "guardrail_decisions":[inp]}
     if inp.get("pii"):
-        log_step(trace, "PII redaction", {"pii": inp["pii"]})
+        log_step(trace, "PII redaction", {"pii": inp["pii"], "redacted": inp.get("redacted")})
     if inp.get("abuse"):
         log_step(trace, "Abuse detection", {"abuse": True})
+    # PII Decision A: REDACT email/phone and continue with sanitized input; raw PII never reaches LLM/memory
+    if inp.get("redacted") and inp.get("redacted") != state["user_input"]:
+        log_step(trace, "PII sanitization", {"original_length": len(state["user_input"]), "sanitized": inp["redacted"]})
+        return {"guardrail_decisions":[inp], "blocked": False, "user_input": inp["redacted"]}
     return {"guardrail_decisions":[inp], "blocked": False}
 
 def node_intent(state: AgentState):
@@ -150,8 +151,8 @@ def node_memory(state: AgentState):
     return {"memories": mems + [{"content": f"Structured: {structured}", "type": "customer"}]}
 
 def node_rag(state: AgentState):
-    docs=chroma_retrieve(state["user_input"], top_k=3)
-    log_step(state["trace"], "RAG", {"docs": [d["metadata"].get("document") for d in docs], "mode": "chroma_only"})
+    docs=retrieve_policy(state["user_input"], top_k=3)
+    log_step(state["trace"], "RAG", {"docs": [d["metadata"].get("document") for d in docs], "mode": "retrieve_policy"})
     return {"retrieved_docs": docs}
 
 def _retry_tool(fn, *args, **kwargs):
@@ -206,6 +207,22 @@ def node_tools(state: AgentState):
             tool_results["get_order_status"]=sres
             log_step(trace, "Tool get_order_status", {"result": sres, "execution_mode": execution_mode})
 
+    # Generic order_support without specific order_id: list active orders via memory + tool
+    if intent=="order_support" and not oid:
+        dec = evaluate_policy("get_customer_orders", {"customer_id": cid}, auth)
+        log_step(trace, "Policy Engine get_customer_orders", dec.to_dict(), safe=dec.allowed)
+        if dec.allowed:
+            orders = _retry_tool(get_customer_orders, cid)
+            # normalize: get_customer_orders returns list or dict
+            if isinstance(orders, dict) and "orders" in orders:
+                orders = orders["orders"]
+            elif not isinstance(orders, list):
+                orders = [orders] if orders else []
+            tools_used.append("get_customer_orders")
+            tool_results["get_customer_orders"] = orders
+            log_step(trace, "Tool get_customer_orders", {"result": orders, "execution_mode": execution_mode})
+        # else blocked stays empty
+
     # Intent-specific tools - policy check BEFORE execution
     if intent=="cancel_order" and oid:
         decision=evaluate_policy("cancel_order", {"order_id": oid, "confirmation": state.get("confirm",False)}, auth)
@@ -226,17 +243,19 @@ def node_tools(state: AgentState):
     elif intent=="refund":
         rid=extract_refund_id(state["user_input"])
         if rid:
-            # Check ownership via refund->order->customer
-            # need to fetch refund first to get order_id for policy; but we can allow get_refund_status as low-risk read
-            # ownership still enforced: if refund belongs to other customer, tool will return data but policy at response will deny?
-            # Better to check after fetch: if refund customer_id != auth, block
+            dec = evaluate_policy("get_refund_status", {"refund_id": rid}, auth)
+            log_step(trace, "Policy Engine get_refund_status", dec.to_dict(), safe=dec.allowed)
+            if not dec.allowed:
+                tool_results["policy_block"]=dec.to_dict()
+                log_step(trace, "Policy Block get_refund_status", dec.to_dict(), safe=False)
+                # surface as access denied error for consistent UX
+                if "Access denied" in dec.reason:
+                    tool_results["get_refund_status"]={"error": "Access denied: refund does not belong to authenticated customer"}
+                return {"tools_used": tools_used, "tool_results": tool_results, "policy_decision": dec.to_dict(), "execution_mode": execution_mode}
             rres=get_refund_status(rid)
             tools_used.append("get_refund_status")
             tool_results["get_refund_status"]=rres
             log_step(trace, "Tool get_refund_status", {"result": rres, "execution_mode": execution_mode})
-            # post-check ownership: refund should belong to customer
-            if isinstance(rres, dict) and rres.get("customer_id") and rres["customer_id"] != cid:
-                tool_results["get_refund_status"]={"error": "Access denied: refund does not belong to authenticated customer"}
         elif oid:
             # check_refund_eligibility is read-only but still ownership-checked
             dec = evaluate_policy("check_refund_eligibility", {"order_id": oid}, auth)
@@ -412,11 +431,44 @@ def node_respond(state: AgentState):
         if not oid and not tool_results.get("get_refund_status"):
             return {"response":"Could you provide your order ID so I can check refund eligibility per refund-policy v4?"}
 
-    if intent=="order_support" and oid:
-        status_data=tool_results.get("get_order_status",{})
-        if "error" not in status_data:
-            shipped=tool_results.get("get_order",{}).get("shipped_date","2026-09-17")
-            return {"response": attach_citations(f"Your order #{oid} was shipped on {shipped} and is currently {status_data.get('carrier_status','in transit')}. Estimated delivery by {status_data.get('estimated_delivery','2026-09-22')} per shipping-policy v4.", docs)}
+    if intent=="order_support":
+        if oid:
+            status_data=tool_results.get("get_order_status",{})
+            if "error" not in status_data and status_data:
+                shipped=tool_results.get("get_order",{}).get("shipped_date","2026-09-17")
+                return {"response": attach_citations(f"Your order #{oid} was shipped on {shipped} and is currently {status_data.get('carrier_status','in transit')}. Estimated delivery by {status_data.get('estimated_delivery','2026-09-22')} per shipping-policy v4.", docs)}
+            # if we have get_order but status missing, fallback to order status
+            if "get_order" in tool_results and "error" not in tool_results["get_order"]:
+                o=tool_results["get_order"]
+                return {"response": attach_citations(f"Your order #{o.get('id')} is {o.get('status')} (amount ${o.get('amount')}). Shipping: {o.get('shipping_address','')[:50]}. Per shipping-policy v4.", docs)}
+        # no specific order_id -> list active orders
+        if "get_customer_orders" in tool_results:
+            orders = tool_results["get_customer_orders"]
+            if isinstance(orders, list) and orders:
+                lines = []
+                for o in orders:
+                    if isinstance(o, dict):
+                        lines.append(f"- #{o.get('id')} — {o.get('status')} — ${o.get('amount')} — {o.get('product','')}")
+                    else:
+                        lines.append(str(o))
+                # ask clarification for next step
+                summary = "\n".join(lines)
+                return {"response": f"Here are your active orders:\n{summary}\n\nWhich order would you like details for? (e.g., 'where is order #123')", "tools_used": tools_used, "tool_results": tool_results}
+            else:
+                return {"response": "You have no active orders at the moment. If you have an order ID, please share it and I can look it up."}
+        # fallback: try memory structured if tool failed
+        try:
+            mems = state.get("memories", [])
+            structured = None
+            for m in mems:
+                if "Structured:" in m.get("content",""):
+                    import ast, json, re
+                    structured = m["content"]
+                    break
+            if structured and "active_orders" in structured:
+                return {"response": f"{structured}\n\nPlease tell me which order ID you need help with."}
+        except: pass
+        return {"response": "I can help with your orders — could you share the order ID (e.g., #123)? Your active orders are available via 'list my orders'."}
 
     if intent=="address_update" and "update_delivery_address" in tool_results:
         ures=tool_results["update_delivery_address"]
@@ -479,6 +531,8 @@ def node_output_guardrail(state: AgentState):
 def node_store_memory(state: AgentState):
     auth = _auth_from_state(state)
     cid = auth.customer_id or state["customer_id"]
+    if state.get("blocked"):
+        return {"trace": state["trace"]}
     content=f"User: {state['user_input']} -> Intent {state.get('intent')} tools {state.get('tools_used')}"
     store_memory(cid, content, type="episodic")
     return {"trace": state["trace"]}
@@ -512,14 +566,12 @@ _graph=build_graph()
 
 def run_graph(user_input: str, customer_id: str="C102", confirm: bool=False, auth_context: AuthContext=None):
     inc("requests")
-    # Derive auth_context from customer_id if not provided (backward compat for tests)
-    if auth_context is None:
-        auth_context = AuthContext(authenticated=True, user_id=customer_id, customer_id=customer_id, roles=["customer"])
-    # Ensure customer_id derived from auth
-    cid = auth_context.customer_id if auth_context and auth_context.is_authenticated() else customer_id
+    if auth_context is None or not auth_context.is_authenticated():
+        raise ValueError("auth_context is required: unauthenticated run_graph calls are not allowed in production. Use tests/conftest.py fixture to create AuthContext.")
+    cid = auth_context.customer_id
     trace=start_trace(cid, user_input, auth_context=auth_context)
     # Log auth for observability
-    log_step(trace, "Authentication", {"customer_id": cid, "authenticated": auth_context.is_authenticated() if auth_context else False, "roles": auth_context.roles if auth_context else []})
+    log_step(trace, "Authentication", {"customer_id": cid, "authenticated": auth_context.is_authenticated(), "roles": auth_context.roles})
     init_state={"user_input": user_input, "customer_id": cid, "auth_context": {"authenticated": auth_context.authenticated, "user_id": auth_context.user_id, "customer_id": auth_context.customer_id, "roles": auth_context.roles}, "confirm": confirm, "trace": trace, "tools_used":[], "tool_results":{}, "messages":[{"role":"user","content": user_input}], "execution_mode": get_execution_mode()}
     result=_graph.invoke(init_state)
     end_trace(trace)

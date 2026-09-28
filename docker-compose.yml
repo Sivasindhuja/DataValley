@@ -10,17 +10,25 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/support}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - CHROMA_PERSIST_DIR=/app/data/chroma
-      - ENABLE_MCP=${ENABLE_MCP:-false}
-      - MCP_EXECUTION_MODE=${MCP_EXECUTION_MODE:-direct}
+      - TOOL_EXECUTION_MODE=${TOOL_EXECUTION_MODE:-direct}
       - LLM_MODEL=${LLM_MODEL:-gemini-1.5-flash}
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me-please-use-env}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - ./data:/app/data
       - ./knowledge:/app/knowledge
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).getcode()==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   db:
     image: postgres:16-alpine
@@ -32,6 +40,11 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -39,6 +52,11 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   pgdata:

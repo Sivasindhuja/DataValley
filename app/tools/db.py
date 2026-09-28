@@ -4,7 +4,11 @@ from datetime import datetime
 import os
 from app.config import settings
 
-# Centralized config: single source of truth
+# Centralized config: single source of truth - read dynamically from settings to avoid stale copies
+def _sync_url() -> str:
+    return settings.sync_database_url
+
+# Backward compat aliases (deprecated, use settings.* directly)
 DATABASE_URL = settings.database_url
 sync_url = settings.sync_database_url
 
@@ -61,12 +65,25 @@ class MemoryStore(Base):
     type = Column(String) # episodic, customer
     created_at = Column(DateTime, default=datetime.utcnow)
 
+_engine = None
+_SessionLocal = None
+
 def get_engine():
+    global _engine, _SessionLocal
+    if _engine is not None:
+        return _engine
+    sync_url = _sync_url()
     # only create data dir for sqlite
     if sync_url.startswith("sqlite"):
         os.makedirs("data", exist_ok=True)
-        os.makedirs(os.path.dirname(sync_url.replace("sqlite:///","")) or "data", exist_ok=True)
-    return create_engine(sync_url, echo=False, pool_pre_ping=True)
+        d = os.path.dirname(sync_url.replace("sqlite:///",""))
+        if d:
+            os.makedirs(d, exist_ok=True)
+        _engine = create_engine(sync_url, echo=False, pool_pre_ping=True, connect_args={"check_same_thread": False})
+    else:
+        _engine = create_engine(sync_url, echo=False, pool_pre_ping=True, pool_size=10, max_overflow=20, pool_recycle=3600)
+    _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    return _engine
 
 def init_db():
     engine = get_engine()
@@ -74,7 +91,6 @@ def init_db():
     return engine
 
 def get_session():
-    engine = get_engine()
-    Session = sessionmaker(bind=engine)
-    return Session()
+    get_engine()
+    return _SessionLocal()
 

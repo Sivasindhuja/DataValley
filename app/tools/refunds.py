@@ -7,7 +7,7 @@ def get_refund_status(refund_id: str):
     r = s.query(Refund).filter_by(id=refund_id).first()
     s.close()
     if not r: return {"error": "Refund not found"}
-    return {"id": r.id, "order_id": r.order_id, "status": r.status, "amount": r.amount}
+    return {"id": r.id, "order_id": r.order_id, "customer_id": r.customer_id, "status": r.status, "amount": r.amount}
 
 def check_refund_eligibility(order_id: str):
     s = get_session()
