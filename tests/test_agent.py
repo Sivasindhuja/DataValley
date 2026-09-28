@@ -1,4 +1,4 @@
-from app.agent.agent import run_agent
+from app.agent.graph import run_graph as run_agent
 from app.auth.models import AuthContext
 def make_auth(cid="C102"):
     return AuthContext(authenticated=True, user_id=cid, customer_id=cid, roles=["customer"])
