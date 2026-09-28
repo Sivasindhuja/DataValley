@@ -141,7 +141,7 @@ All settings live in `app/config.py` (a `pydantic-settings` `BaseSettings` class
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `GOOGLE_API_KEY` | — | Gemini API key (required for the LLM) |
-| `LLM_MODEL` | `gemini-1.5-flash` | Chat model. Legacy `LM_MODEL` is auto-mapped |
+| `LLM_MODEL` | `gemini-2.5-flash` | Chat model. Legacy `LM_MODEL` is auto-mapped |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Sentence embeddings for Chroma |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | SQLAlchemy URL. Postgres via `postgresql://…` |
 | `CHROMA_PERSIST_DIR` | `./data/chroma` | Vector store persistence dir |
