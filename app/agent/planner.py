@@ -6,7 +6,7 @@ def _llm_plan(user_input: str, intent: str, has_order_id: bool):
         if not os.getenv("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")=="your_gemini_api_key_here":
             return None
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-        model=genai.GenerativeModel(os.getenv("LLM_MODEL","gemini-1.5-flash"))
+        model=genai.GenerativeModel(os.getenv("LLM_MODEL","gemini-2.5-flash"))
         prompt=f"""You are a support agent planner. Given intent={intent}, has_order_id={has_order_id}, user says: "{user_input}"
 Return a JSON list of 3-6 steps like ["identify order", "get_order_status", "retrieve shipping-policy", "reason", "respond"].
 Keep steps concise, include tool names where relevant."""
